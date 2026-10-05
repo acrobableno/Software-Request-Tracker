@@ -34,20 +34,24 @@ def init_db():
                 latest_version TEXT,
                 risk_level TEXT,
                 check_json TEXT,
-                checked_at TEXT
+                checked_at TEXT,
+                submitted_by TEXT
             )"""
         )
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(requests)")]
+        if "submitted_by" not in columns:  # databases created before login accounts existed
+            conn.execute("ALTER TABLE requests ADD COLUMN submitted_by TEXT")
 
 
 def add_request(requester_name, requester_email, department, software_name,
-                requested_version, platform, purpose):
+                requested_version, platform, purpose, submitted_by=None):
     with _connect() as conn:
         cur = conn.execute(
             """INSERT INTO requests (created_at, requester_name, requester_email, department,
-               software_name, requested_version, platform, purpose)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               software_name, requested_version, platform, purpose, submitted_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (datetime.now().isoformat(timespec="seconds"), requester_name, requester_email,
-             department, software_name, requested_version, platform, purpose),
+             department, software_name, requested_version, platform, purpose, submitted_by),
         )
         return cur.lastrowid
 
@@ -58,9 +62,13 @@ def get_request(request_id):
     return dict(row) if row else None
 
 
-def list_requests():
+def list_requests(submitted_by=None):
     with _connect() as conn:
-        rows = conn.execute("SELECT * FROM requests ORDER BY id DESC").fetchall()
+        if submitted_by:
+            rows = conn.execute("SELECT * FROM requests WHERE submitted_by = ? ORDER BY id DESC",
+                                (submitted_by,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM requests ORDER BY id DESC").fetchall()
     return [dict(r) for r in rows]
 
 

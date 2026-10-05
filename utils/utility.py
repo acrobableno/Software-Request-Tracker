@@ -12,24 +12,44 @@ def get_secret(key, default=None):
         return default
 
 
-def check_password():
-    """Returns True if the user has entered the correct APP_PASSWORD."""
-    expected = get_secret("APP_PASSWORD")
-    if not expected:
-        st.error("APP_PASSWORD is not set in .streamlit/secrets.toml.")
-        return False
+def _users():
+    """Accounts from secrets.toml:  [users.<name>] password = "..."  role = "user" | "admin"."""
+    users = get_secret("users", {}) or {}
+    return {name: dict(cfg) for name, cfg in users.items()}
 
-    def password_entered():
-        if hmac.compare_digest(st.session_state["password"], expected):
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # don't keep the password around
-        else:
-            st.session_state["password_correct"] = False
 
-    if st.session_state.get("password_correct", False):
-        return True
+def login_form():
+    """Username + password login (extends AI Bootcamp 8.2 check_password with roles)."""
+    users = _users()
+    if not users:
+        st.error("No accounts configured. Add [users.user] and [users.admin] to .streamlit/secrets.toml.")
+        return
+    with st.form("login"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.form_submit_button("Log in", type="primary"):
+            account = users.get(username.strip())
+            if account and hmac.compare_digest(password.encode(), str(account.get("password", "")).encode()):
+                st.session_state["user"] = {"username": username.strip(), "role": account.get("role", "user")}
+                st.rerun()
+            st.error("😕 Username or password incorrect")
 
-    st.text_input("Password", type="password", on_change=password_entered, key="password")
-    if "password_correct" in st.session_state:
-        st.error("😕 Password incorrect")
-    return False
+
+def current_user():
+    return st.session_state.get("user")
+
+
+def logout():
+    st.session_state.pop("user", None)
+
+
+def require_role(*roles):
+    """Stop the page unless someone is logged in (and has one of `roles`, if given)."""
+    user = current_user()
+    if not user:
+        st.warning("Please log in from the home page.")
+        st.stop()
+    if roles and user["role"] not in roles:
+        st.error("You don't have access to this page.")
+        st.stop()
+    return user

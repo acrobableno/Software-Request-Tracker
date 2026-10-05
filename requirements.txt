@@ -3,3 +3,8 @@ openai>=1.40
 requests
 pandas
 packaging
+# RAG (AI Bootcamp Topics 3, 4, 7.4)
+langchain-openai
+langchain-chroma
+langchain-text-splitters
+pypdf

@@ -3,7 +3,7 @@ from datetime import datetime
 
 from packaging.version import InvalidVersion, Version
 
-from utils import llm, sources
+from utils import llm, rag, sources
 
 
 def _parse(v):
@@ -162,6 +162,15 @@ def run_check(request, overrides=None, progress=print):
         "osv": osv,
     }
     findings["risk"] = rate_risk(findings)
+
+    if rag.rag_available():
+        progress("Retrieving relevant policy clauses and past decisions (RAG)…")
+        try:
+            findings["policy_context"] = rag.retrieve_policy(display, identity.get("category"), request.get("purpose"))
+            findings["precedents"] = rag.retrieve_precedents(display, identity.get("category"),
+                                                             exclude_id=request.get("id"))
+        except Exception as e:  # RAG is an add-on: never block the check
+            findings["rag_error"] = str(e)
 
     progress("Writing AI summary…")
     findings["summary"] = llm.write_assessment(request, findings)

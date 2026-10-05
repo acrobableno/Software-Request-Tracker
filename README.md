@@ -7,16 +7,22 @@ and grounding the LLM to avoid hallucinations (1.9).
 
 ```
 software-request-app/
-├── app.py                     # Submit a request (UI only)
-├── pages/1_Review_Requests.py # Approver queue: decide, add notes, re-run check, CSV export
+├── app.py                     # Login + role-based navigation (user / admin)
+├── pages/0_Submit_Request.py  # Submit a request (all accounts)
+├── pages/5_My_Requests.py     # Status of your own requests (all accounts)
+├── pages/1_Review_Requests.py # ADMIN: decide, add notes, re-run check, CSV export
 ├── pages/2_About.py           # Method, risk rules, limitations
+├── pages/3_Ask_IT.py          # RAG chatbot over policies + past decisions
+├── pages/4_Knowledge_Base.py  # ADMIN: upload / edit / remove policy documents, test retrieval
+├── policies/                  # SAMPLE policy documents (replace with your own .pdf/.md/.txt)
 ├── utils/
 │   ├── sources.py             # Official-source lookups (NVD, CISA KEV, endoflife.date, GitHub, PyPI, npm, Homebrew, OSV)
-│   ├── llm.py                 # OpenAI: identify product → identifiers; summarise findings
+│   ├── llm.py                 # OpenAI: identify product → identifiers; summarise findings; chat
+│   ├── rag.py                 # RAG: chunk → embed → Chroma → retrieve (policies + past decisions)
 │   ├── assess.py              # Orchestration + rule-based risk rating
 │   ├── db.py                  # SQLite storage (data/requests.db)
 │   ├── ui.py                  # Shared results view
-│   └── utility.py             # check_password(), get_secret()
+│   └── utility.py             # login_form(), require_role(), get_secret()
 ├── tests/                     # Offline tests with mocked API responses
 └── .streamlit/secrets.toml.example
 ```
@@ -38,10 +44,26 @@ Tests: `pip install pytest && pytest -q tests`
 3. **Vulnerabilities**: NIST NVD CVE API 2.0 for the requested version (and latest, for comparison),
    CISA KEV catalog cross-check, OSV.dev for PyPI/npm packages.
 4. **Risk** is rule-based (High / Medium / Unverified / Low) — see the About page. The LLM only writes the summary.
+5. **RAG**: relevant policy clauses and similar past decisions are retrieved from Chroma and added to the
+   summary prompt, so the recommendation cites policy ([file]) and precedents ([Request #id]).
+
+## RAG features (Topics 3, 4, 7.4)
+| Feature | Where | Index |
+|---|---|---|
+| Policy check in every assessment | Request + Review pages | `policies/` files → 800-char chunks, 100 overlap |
+| Past-decision precedents | Request + Review pages | one document per decided request (no requester names) |
+| Ask IT chatbot | `pages/3_Ask_IT.py` | both indexes |
+
+Indexes are in-memory Chroma collections built with `text-embedding-3-small`, cached with `@st.cache_resource`
+and rebuilt automatically when the policy files or decisions change. RAG needs `OPENAI_API_KEY`.
+Uploads on the Knowledge Base page are temporary on Streamlit Cloud — commit policy files to `policies/` to keep them.
 
 Without `OPENAI_API_KEY` the app still works: it uses NVD keyword search to find the product.
 
 ## Notes
 - NVD without an API key is throttled to 5 requests / 30 s, so a check takes ~20–30 s. Get a free key for speed.
 - On Streamlit Community Cloud the SQLite file is wiped on redeploy; use a hosted DB for real use.
-- Everyone with `APP_PASSWORD` can see the review page. Split into separate apps/passwords if requesters shouldn't approve.
+- Two roles from `secrets.toml` (`[users.user]`, `[users.admin]`): users submit and track requests; admins also approve and edit policies.
+  Pages are hidden by role (`st.navigation`) and each admin page re-checks the role.
+- Policies are **default deny**: anything not pre-approved needs admin approval.
+- Policy edits/uploads made in the app are lost when Streamlit Cloud restarts — commit lasting changes to `policies/`.

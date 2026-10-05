@@ -1,6 +1,7 @@
 """Offline tests: mocked official-source responses (no network, no OpenAI key needed)."""
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+import time, types
 import pytest
 from utils import sources, assess
 
@@ -33,7 +34,8 @@ def fake_get(url, params=None, headers=None):
 def mock(monkeypatch):
     calls.clear()
     monkeypatch.setattr(sources, "_get", fake_get)
-    monkeypatch.setattr(sources.time, "sleep", lambda s: None)
+    # skip NVD throttling without touching the global time.sleep (AppTest needs it)
+    monkeypatch.setattr(sources, "time", types.SimpleNamespace(sleep=lambda s: None, time=time.time))
     def no_network(*a, **k): raise sources.requests.ConnectionError("offline test")
     monkeypatch.setattr(sources.requests, "get", no_network)   # chocolatey
     monkeypatch.setattr(sources.requests, "post", no_network)  # osv

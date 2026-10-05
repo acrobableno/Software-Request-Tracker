@@ -78,6 +78,27 @@ def render_findings(f):
         with st.expander(f"Vulnerabilities — latest version {latest['version']} (for comparison)"):
             _cve_table(f["cves_latest"])
 
+    if "policy_context" in f or f.get("rag_error"):
+        with st.expander("Policy & past decisions used by the AI (RAG)"):
+            if f.get("rag_error"):
+                st.warning(f"Policy/precedent retrieval failed: {f['rag_error']}")
+            render_chunks(f.get("policy_context") or [], f.get("precedents") or [])
+
     with st.expander("Identifiers used"):
         st.json(identity)
     st.caption(f"Checked {f['checked_at']}")
+
+
+def render_chunks(policy, precedents):
+    """Show retrieved RAG context so the reviewer can check what the AI was given."""
+    st.markdown("**Policy excerpts**" if policy else "_No policy excerpts retrieved._")
+    for c in policy:
+        page = f", p.{c['page']}" if c.get("page") else ""
+        with st.container(border=True):
+            st.caption(f"{c['source']}{page} · relevance {c['score']}")
+            st.text(c["text"])
+    st.markdown("**Similar past decisions**" if precedents else "_No similar past decisions._")
+    for h in precedents:
+        with st.container(border=True):
+            st.caption(f"Request #{h['request_id']} · {h['date']} · {h['decision']} · relevance {h['score']}")
+            st.text(h["text"])

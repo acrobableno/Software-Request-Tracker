@@ -6,11 +6,9 @@ import streamlit as st
 from utils import db
 from utils.assess import run_check
 from utils.ui import RISK_BADGE, render_findings
-from utils.utility import check_password
+from utils.utility import require_role
 
-st.set_page_config(layout="wide", page_title="Review Requests")
-if not check_password():
-    st.stop()
+require_role("admin")
 
 db.init_db()
 st.title("📋 Review Requests")
