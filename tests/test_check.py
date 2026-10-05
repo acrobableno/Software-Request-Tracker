@@ -31,8 +31,11 @@ def fake_get(url, params=None, headers=None):
     return None, "not found"
 
 @pytest.fixture(autouse=True)
-def mock(monkeypatch):
+def mock(monkeypatch, tmp_path):
     calls.clear()
+    from utils import db
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "check.db")
+    db.init_db()
     monkeypatch.setattr(sources, "_get", fake_get)
     # skip NVD throttling without touching the global time.sleep (AppTest needs it)
     monkeypatch.setattr(sources, "time", types.SimpleNamespace(sleep=lambda s: None, time=time.time))

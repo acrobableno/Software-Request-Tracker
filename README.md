@@ -10,6 +10,7 @@ software-request-app/
 ├── app.py                     # Login + role-based navigation (user / admin)
 ├── pages/0_Submit_Request.py  # Submit a request (all accounts)
 ├── pages/5_My_Requests.py     # Status of your own requests (all accounts)
+├── pages/6_Approved_Software.py # Approved-software register (all accounts)
 ├── pages/1_Review_Requests.py # ADMIN: decide, add notes, re-run check, CSV export
 ├── pages/2_About.py           # Method, risk rules, limitations
 ├── pages/3_Ask_IT.py          # RAG chatbot over policies + past decisions
@@ -19,6 +20,7 @@ software-request-app/
 │   ├── sources.py             # Official-source lookups (NVD, CISA KEV, endoflife.date, GitHub, PyPI, npm, Homebrew, OSV)
 │   ├── llm.py                 # OpenAI: identify product → identifiers; summarise findings; chat
 │   ├── rag.py                 # RAG: chunk → embed → Chroma → retrieve (policies + past decisions)
+│   ├── approvals.py           # Approved-software register (latest admin decision per product)
 │   ├── assess.py              # Orchestration + rule-based risk rating
 │   ├── db.py                  # SQLite storage (data/requests.db)
 │   ├── ui.py                  # Shared results view
@@ -50,11 +52,11 @@ Tests: `pip install pytest && pytest -q tests`
 ## RAG features (Topics 3, 4, 7.4)
 | Feature | Where | Index |
 |---|---|---|
-| Policy check in every assessment | Request + Review pages | `policies/` files → 800-char chunks, 100 overlap |
+| Policy check in every assessment | Request + Review pages | `policies/` files → Markdown split by heading, one chunk per table row (prefixed with its section); PDFs 800-char chunks |
 | Past-decision precedents | Request + Review pages | one document per decided request (no requester names) |
-| Ask IT chatbot | `pages/3_Ask_IT.py` | both indexes |
+| Ask IT chatbot | `pages/3_Ask_IT.py` | policy index + the full approved-software register |
 
-Indexes are in-memory Chroma collections built with `text-embedding-3-small`, cached with `@st.cache_resource`
+Retrieval is hybrid: product-name matches first, then semantic search. Indexes are in-memory Chroma collections built with `text-embedding-3-small`, cached with `@st.cache_resource`
 and rebuilt automatically when the policy files or decisions change. RAG needs `OPENAI_API_KEY`.
 Uploads on the Knowledge Base page are temporary on Streamlit Cloud — commit policy files to `policies/` to keep them.
 
@@ -65,5 +67,8 @@ Without `OPENAI_API_KEY` the app still works: it uses NVD keyword search to find
 - On Streamlit Community Cloud the SQLite file is wiped on redeploy; use a hosted DB for real use.
 - Two roles from `secrets.toml` (`[users.user]`, `[users.admin]`): users submit and track requests; admins also approve and edit policies.
   Pages are hidden by role (`st.navigation`) and each admin page re-checks the role.
-- Policies are **default deny**: anything not pre-approved needs admin approval.
+- Policies are **default deny with no pre-approved software**: an admin approval makes the software allowed for everyone
+  (latest decision per product wins). The register comes straight from the database, not from RAG.
+- ⚠️ On Streamlit Community Cloud the SQLite database — and therefore the approved list — is wiped on restart/redeploy.
+  Use a hosted database before relying on it.
 - Policy edits/uploads made in the app are lost when Streamlit Cloud restarts — commit lasting changes to `policies/`.

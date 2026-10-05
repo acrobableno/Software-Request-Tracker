@@ -75,4 +75,13 @@ def test_submit_track_and_review(tmp_path, monkeypatch):
     mine.run()
     assert mine.dataframe[0].value["status"].tolist() == ["Approved with Conditions"]
 
+    reg = page("pages/6_Approved_Software.py", "user"); reg.run()   # approved for everyone
+    assert not reg.exception and reg.dataframe[0].value["software"].tolist() == ["Python"]
+
+    again = page("pages/0_Submit_Request.py", "user"); again.run()   # second request shows the approval
+    ti = again.text_input
+    ti[0].input("Bob"); ti[3].input("python"); again.text_area[0].input("more scripts")
+    again.button[0].click().run()
+    assert any("already approved for everyone" in s.value for s in again.success)
+
     ab = page("pages/2_About.py", "user"); ab.run(); assert not ab.exception

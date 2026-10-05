@@ -23,6 +23,14 @@ def render_findings(f):
     identity = f["identity"]
     latest = f.get("latest")
 
+    for e in f.get("approval") or []:
+        notes = f" — notes: {e['notes']}" if e["notes"] else ""
+        if e["status"] in ("Approved", "Approved with Conditions"):
+            st.success(f"✅ **{e['software']}** is already approved for everyone "
+                       f"({e['status']}, Request #{e['request_id']}, {e['date']}){notes}")
+        else:
+            st.error(f"⛔ **{e['software']}** was previously rejected (Request #{e['request_id']}, {e['date']}){notes}")
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Risk (rule-based)", RISK_BADGE.get(risk["level"], risk["level"]))
     c2.metric("Requested", f.get("requested_version") or "latest")
@@ -97,6 +105,8 @@ def render_chunks(policy, precedents):
         with st.container(border=True):
             st.caption(f"{c['source']}{page} · relevance {c['score']}")
             st.text(c["text"])
+    if precedents is None:
+        return
     st.markdown("**Similar past decisions**" if precedents else "_No similar past decisions._")
     for h in precedents:
         with st.container(border=True):

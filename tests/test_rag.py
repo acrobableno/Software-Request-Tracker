@@ -64,7 +64,7 @@ def test_assessment_prompt_includes_rag_context(monkeypatch):
     findings = {"risk": {"level": "Low"}, "policy_context": rag.retrieve_policy("uTorrent", "P2P"),
                 "precedents": [{"request_id": 7, "date": "2026-10-01", "text": "Decision: Rejected"}]}
     llm.write_assessment({"software_name": "uTorrent"}, findings)
-    assert "<policy>" in seen["p"] and "approved_software_catalogue.md" in seen["p"]
+    assert "<policy>" in seen["p"] and "software_catalogue.md" in seen["p"]
     assert "[Request #7, 2026-10-01]" in seen["p"]
     assert '"policy_context"' not in seen["p"]   # not duplicated inside findings JSON
 
@@ -73,9 +73,9 @@ def test_chat_and_knowledge_base_pages(monkeypatch):
     from streamlit.testing.v1 import AppTest
     root = pathlib.Path(__file__).resolve().parent.parent
     captured = {}
-    def fake_stream(messages, policy_text, precedents_text):
-        captured.update(messages=messages, policy=policy_text)
-        yield "TeamViewer needs CISO approval [approved_software_catalogue.md]."
+    def fake_stream(messages, policy_text, register_text):
+        captured.update(messages=messages, policy=policy_text, register=register_text)
+        yield "TeamViewer needs CISO approval [software_catalogue.md]."
     monkeypatch.setattr(llm, "chat_stream", fake_stream)
 
     at = AppTest.from_file(str(root / "pages/3_Ask_IT.py"), default_timeout=30)
@@ -85,6 +85,7 @@ def test_chat_and_knowledge_base_pages(monkeypatch):
     assert not at.exception, at.exception
     assert "CISO approval" in at.chat_message[1].markdown[0].value
     assert "TeamViewer" in captured["policy"] and captured["messages"][-1]["content"] == "Can I install TeamViewer?"
+    assert captured["register"] == "(no software has been approved yet)"
 
     kb = AppTest.from_file(str(root / "pages/4_Knowledge_Base.py"), default_timeout=30)
     kb.session_state["user"] = {"username": "admin", "role": "admin"}
@@ -110,3 +111,71 @@ def test_admin_can_edit_policy(monkeypatch, tmp_path):
     assert not kb.exception, kb.exception
     assert (pol / doc.name).read_text() == "# New rule\nZoom is prohibited."
     assert any("Zoom is prohibited" in c["text"] for c in rag.retrieve_policy("Zoom", k=8))  # re-indexed
+
+
+def test_every_catalogue_row_keeps_its_section():
+    """Regression: rows at the end of a long table used to lose their section heading."""
+    rows = [c for c in rag.load_policy_chunks() if c.metadata.get("item")]
+    assert len(rows) >= 8
+    ccleaner = next(c for c in rows if c.metadata["item"] == "CCleaner")
+    assert "> Prohibited]" in ccleaner.page_content and "| Software |" in ccleaner.page_content
+    assert all(c.page_content.startswith("[") for c in rows)
+
+
+def test_no_pre_approved_software_in_policies():
+    text = " ".join(c.page_content for c in rag.load_policy_chunks())
+    assert "| Python |" not in text and "> Pre-approved" not in text
+    assert "no pre-approved software" in text.lower()
+
+
+@pytest.mark.parametrize("software, section", [("TeamViewer", "Restricted"), ("AnyDesk", "Restricted"),
+                                               ("uTorrent", "Prohibited"), ("CCleaner", "Prohibited")])
+def test_catalogue_status_is_retrieved_first(software, section):
+    top = rag.retrieve_policy(software, None, "work")[0]
+    assert top["match"] == "name" and section in top["section"]
+
+
+def test_chat_question_finds_catalogue_row():
+    hits = rag.retrieve_policy("Can I install TeamViewer for support?", k=5)
+    assert any(h.get("item") == "TeamViewer" and "Restricted" in h["text"] for h in hits)
+
+
+def test_unlisted_software_has_no_name_match():
+    assert all(h.get("match") != "name" for h in rag.retrieve_policy("Slack", "Chat"))
+
+
+# ---- approved-software register: admin approval applies to everyone -------------------
+from utils import approvals
+
+
+def test_register_latest_decision_wins_and_applies_to_all():
+    a = db.add_request("Ann", "", "Finance", "Zoom", "", "Windows", "meetings", submitted_by="user")
+    db.update_status(a, "Approved with Conditions", "latest version only")
+    b = db.add_request("Bob", "", "IT", "uTorrent", "", "Windows", "downloads", submitted_by="user")
+    db.update_status(b, "Rejected", "P2P prohibited")
+    db.add_request("Cat", "", "HR", "Slack", "", "Windows", "chat", submitted_by="user")  # pending
+    reg = {e["software"]: e for e in approvals.register()}
+    assert set(reg) == {"Zoom", "uTorrent"}
+    assert approvals.is_approved(reg["Zoom"]) and not approvals.is_approved(reg["uTorrent"])
+    assert approvals.find("Zoom Workplace")[0]["request_id"] == a   # name variants match
+    assert approvals.find("Can I install zoom?")[0]["request_id"] == a
+    # a later rejection replaces the approval
+    c = db.add_request("Dan", "", "IT", "zoom", "", "macOS", "again", submitted_by="admin")
+    db.update_status(c, "Rejected", "vendor breach")
+    assert approvals.find("Zoom")[0]["status"] == "Rejected"
+    text = approvals.format_register(approvals.register())
+    assert "REJECTED" in text and "vendor breach" in text and "Ann" not in text
+
+
+def test_assessment_flags_already_approved(monkeypatch):
+    from utils import assess, sources, llm as llm_mod
+    monkeypatch.setattr(sources, "_get", lambda *a, **k: (None, "offline"))
+    monkeypatch.setattr(sources, "fetch_chocolatey", lambda i: None)
+    monkeypatch.setattr(llm_mod, "llm_available", lambda: False)
+    a = db.add_request("Ann", "", "Finance", "Zoom", "", "Windows", "meetings")
+    db.update_status(a, "Approved", "ok")
+    new_id = db.add_request("Bob", "", "IT", "Zoom", "", "Windows", "calls")
+    f = assess.run_check(db.get_request(new_id), progress=lambda m: None)
+    assert [e["request_id"] for e in f["approval"]] == [a]
+    f_self = assess.run_check(db.get_request(a), progress=lambda m: None)
+    assert f_self["approval"] == []   # a request is never its own precedent

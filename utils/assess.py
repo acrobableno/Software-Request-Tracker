@@ -3,7 +3,7 @@ from datetime import datetime
 
 from packaging.version import InvalidVersion, Version
 
-from utils import llm, rag, sources
+from utils import approvals, llm, rag, sources
 
 
 def _parse(v):
@@ -162,6 +162,10 @@ def run_check(request, overrides=None, progress=print):
         "osv": osv,
     }
     findings["risk"] = rate_risk(findings)
+
+    # Approved-software register (exact database lookup, not RAG): approvals apply to everyone
+    matches = {e["request_id"]: e for q in (name, display) for e in approvals.find(q, exclude_id=request.get("id"))}
+    findings["approval"] = list(matches.values())
 
     if rag.rag_available():
         progress("Retrieving relevant policy clauses and past decisions (RAG)…")

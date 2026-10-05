@@ -10,12 +10,14 @@ st.markdown("""
 (1) whether the requested version is the latest official release and (2) its known vulnerabilities.
 
 ### Accounts
-- **user** — submit software requests, see *My Requests*, use *Ask IT*.
+- **user** — submit software requests, see *My Requests* and *Approved Software*, use *Ask IT*.
 - **admin** — everything above, plus *Review Requests* (approve / reject) and *Policies* (upload, edit, remove).
 
-### Policy principle: default deny
-All software is **not allowed** unless it is listed as pre-approved in the policy catalogue or an admin
-approves a request for it. The AI assessment and the Ask IT chatbot both apply this rule.
+### Policy principle: default deny, approve once for everyone
+There is **no pre-approved software**. All software is not allowed until an admin approves a request for it.
+Once approved, it is allowed for **everyone** (with the conditions in the admin's notes) and appears on
+*Approved Software*. The register is read directly from the database, so the assessment and *Ask IT*
+always see the exact current list.
 
 ### How a check works
 1. **Identify** — an LLM maps the free-text name to lookup identifiers (NVD CPE, endoflife.date slug,
@@ -38,7 +40,7 @@ approves a request for it. The AI assessment and the Ask IT chatbot both apply t
 6. **AI summary** — the LLM summarises only the fetched data and retrieved context.
 
 ### Other RAG features
-- **💬 Ask IT** — staff ask policy questions; answers come only from the policy documents and past decisions.
+- **💬 Ask IT** — staff ask policy questions; answers come only from the approved-software register and the policy documents.
 - **📚 Knowledge Base** — add or remove policy documents and test what retrieval returns.
   The bundled documents in `policies/` are **samples** — replace them with your organisation's policies.
 

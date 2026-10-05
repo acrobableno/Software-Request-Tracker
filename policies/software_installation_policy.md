@@ -11,19 +11,20 @@ Applies to all staff, contractors and vendors using organisation-managed laptops
 and to cloud (SaaS) services used to process organisation data.
 
 ## 3. Default rule: not allowed unless approved
-3.0 **All software is NOT allowed by default.** Software may be installed only if:
-  (a) it is listed under "Pre-approved" in the Approved Software Catalogue, or
-  (b) an admin has approved a software request for it (status "Approved" or "Approved with Conditions").
-Software that is not mentioned in any policy is NOT allowed. An approval applies only to the request,
-version and platform it was given for; other staff must submit their own request.
+3.0 **There is no pre-approved software. All software is NOT allowed by default.** Software may be
+installed only after an admin has approved a software request for it (status "Approved" or
+"Approved with Conditions"). Software that is not mentioned in any policy is NOT allowed.
+An approval applies to **everyone** in the organisation, together with any conditions recorded in the
+admin's notes (for example "latest version only"). A later decision on the same software replaces the earlier one.
+The current list is shown on the Approved Software page of the Software Request app.
 
 ## 3A. Request and approval
-3.1 All software not listed as Pre-approved in the Approved Software Catalogue must be requested through the Software Request app.
+3.1 All software that is not on the Approved Software list must be requested through the Software Request app.
 3.2 Each request must state the business justification, the version and the platform.
 3.3 Requests are approved by the IT Security team. Requests for software in the Restricted category also
 require written approval from the CISO.
-3.4 Pre-approved software in the Approved Software Catalogue may be installed without a request,
-provided the latest supported version is installed.
+3.4 Software on the Approved Software list may be installed by anyone without a new request,
+provided the conditions in its approval notes are followed.
 
 ## 4. Security requirements
 4.1 Only the latest vendor-supported version may be installed. Versions that are end-of-life (no longer

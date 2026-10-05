@@ -14,10 +14,11 @@ import streamlit as st
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
 from utils import db
+from utils.approvals import names_match
 from utils.utility import get_secret
 
 POLICY_DIR = Path(__file__).resolve().parent.parent / "policies"
@@ -62,19 +63,56 @@ def policy_files():
     return sorted(p for p in POLICY_DIR.iterdir() if p.suffix.lower() in SUPPORTED_TYPES)
 
 
+def _markdown_chunks(text, source):
+    """Structure-aware chunking for Markdown policies (Topic 4.2 - improving pre-retrieval):
+    - every chunk is prefixed with its heading path, e.g. [Software Catalogue > Restricted ...],
+      so a chunk never loses the section that gives it meaning;
+    - every table row becomes its own chunk (with the table header), so one product = one chunk."""
+    sections = MarkdownHeaderTextSplitter(
+        headers_to_split_on=[("#", "h1"), ("##", "h2"), ("###", "h3")]).split_text(text)
+    prose_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    chunks = []
+    for section in sections:
+        path = " > ".join(section.metadata.values()) or source
+        lines = section.page_content.splitlines()
+        table = [line for line in lines if line.strip().startswith("|")]
+        prose = "\n".join(line for line in lines if not line.strip().startswith("|")).strip()
+        if len(table) < 3:  # not a real table (header + separator + rows): keep it with the prose
+            prose, table = section.page_content.strip(), []
+        for piece in prose_splitter.split_text(prose) if prose else []:
+            chunks.append(Document(page_content=f"[{path}]\n{piece}", metadata={"source": source, "section": path}))
+        header = table[0] if table else ""
+        for row in table[2:]:  # skip header and |---| separator
+            item = row.strip().strip("|").split("|")[0].strip()
+            chunks.append(Document(page_content=f"[{path}]\n{header}\n{row}",
+                                   metadata={"source": source, "section": path, "item": item}))
+    return chunks
+
+
 def load_policy_chunks():
-    pages = []
+    chunks, pdf_pages = [], []
     for path in policy_files():
         if path.suffix.lower() == ".pdf":
             for number, page in enumerate(PdfReader(path).pages, start=1):
                 text = page.extract_text() or ""
                 if text.strip():
-                    pages.append(Document(page_content=text, metadata={"source": path.name, "page": number}))
+                    pdf_pages.append(Document(page_content=text, metadata={"source": path.name, "page": number}))
         else:
-            pages.append(Document(page_content=path.read_text(encoding="utf-8", errors="ignore"),
-                                  metadata={"source": path.name}))
+            chunks += _markdown_chunks(path.read_text(encoding="utf-8", errors="ignore"), path.name)
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    return splitter.split_documents(pages)
+    return chunks + splitter.split_documents(pdf_pages)
+
+
+def _name_search(store, query, field, limit=4):
+    """Keyword half of hybrid retrieval (Topic 4.3): chunks whose product name matches the query.
+    Embeddings alone can rank a one-line table row below long policy paragraphs."""
+    if store is None:
+        return []
+    data = store.get(include=["documents", "metadatas"])
+    hits = [{**meta, "text": doc, "score": 1.0, "match": "name"}
+            for doc, meta in zip(data["documents"], data["metadatas"])
+            if meta and meta.get(field) and names_match(meta[field], query)]
+    return hits[:limit]
 
 
 @st.cache_resource(show_spinner="Indexing policy documents…", max_entries=2)
@@ -90,19 +128,21 @@ def policy_store():
 
 
 def retrieve_policy(software, category=None, purpose=None, k=5):
-    """Two queries - one about the product itself (catalogue entries), one about the
-    situation (rules) - merged and de-duplicated."""
+    """Hybrid retrieval: catalogue rows naming the product first, then semantic search with two
+    queries - one about the product, one about the situation (rules) - de-duplicated."""
     store = policy_store()
+    chunks = _name_search(store, software, "item")
+    seen = {c["text"] for c in chunks}
     queries = [f"{software} {category or ''}".strip(),
                f"Rules for installing {software} ({category or 'software'}). Purpose: {purpose or '-'}. "
                "Version, end-of-life, vulnerabilities, prohibited or restricted software, licensing."]
-    seen, chunks = set(), []
+    semantic = []
     for q in queries:
         for c in _search(store, q, k):
             if c["text"] not in seen:
                 seen.add(c["text"])
-                chunks.append(c)
-    return sorted(chunks, key=lambda c: c["score"], reverse=True)[:k]
+                semantic.append(c)
+    return chunks + sorted(semantic, key=lambda c: c["score"], reverse=True)[:k]
 
 
 # ---------------------------------------------------------------- 2. past decisions
@@ -136,7 +176,11 @@ def decision_store():
 
 
 def retrieve_precedents(software, category=None, exclude_id=None, k=3):
-    hits = _search(decision_store(), f"Software: {software} {category or ''}", k + 1)
+    """Past decisions for the same product (by name) first, then semantically similar ones."""
+    store = decision_store()
+    hits = _name_search(store, software, "software", limit=k)
+    seen = {h["request_id"] for h in hits}
+    hits += [h for h in _search(store, f"Software: {software} {category or ''}", k + 1) if h["request_id"] not in seen]
     return [h for h in hits if h.get("request_id") != exclude_id][:k]
 
 

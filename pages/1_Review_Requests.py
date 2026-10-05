@@ -46,6 +46,8 @@ with right:
                 f" · {req['department'] or '-'}  \nSubmitted {req['created_at']}")
     st.markdown(f"**Justification:** {req['purpose']}")
 
+    st.caption("Approving makes this software allowed for **everyone** (with the conditions in your notes). "
+               "A later decision on the same software replaces this one.")
     with st.form("decision"):
         status = st.selectbox("Decision", db.STATUSES, index=db.STATUSES.index(req["status"]))
         notes = st.text_area("Reviewer notes", value=req["reviewer_notes"] or "")
