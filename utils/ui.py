@@ -53,7 +53,9 @@ def render_findings(f):
                         f"{'**END OF LIFE** since ' + str(cycle['eol_date']) if cycle['is_eol'] else 'supported'}"
                         f"{' until ' + str(cycle['eol_date']) if cycle['eol_date'] and not cycle['is_eol'] else ''}.")
 
-    with st.expander(f"Vulnerabilities — version {f.get('target_version') or '(all)'}", expanded=True):
+    vuln_title = (f"Vulnerabilities — version {f['target_version']}" if f.get("target_version")
+                  else "Vulnerabilities — all historical versions (no version determined, context only)")
+    with st.expander(vuln_title, expanded=bool(f.get("target_version"))):
         cpe = f.get("cpe") or {}
         if cpe.get("error"):
             st.warning(f"NVD product lookup: {cpe['error']}")

@@ -34,7 +34,7 @@ Tests: `pip install pytest && pytest -q tests`
 ## How the check works
 1. **LLM identifies** the product (NVD CPE vendor/product, endoflife.date slug, GitHub repo, package name).
    These are only lookup keys — each is verified against the real source; a wrong guess returns "not found".
-2. **Latest version** from the first source that answers: endoflife.date → official GitHub releases → PyPI/npm → Homebrew cask.
+2. **Latest version** from the first source that answers: endoflife.date → official GitHub releases → PyPI/npm → Chocolatey (Windows) / Homebrew cask (macOS, also searched by name).
 3. **Vulnerabilities**: NIST NVD CVE API 2.0 for the requested version (and latest, for comparison),
    CISA KEV catalog cross-check, OSV.dev for PyPI/npm packages.
 4. **Risk** is rule-based (High / Medium / Unverified / Low) — see the About page. The LLM only writes the summary.

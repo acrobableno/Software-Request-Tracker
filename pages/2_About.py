@@ -15,13 +15,16 @@ st.markdown("""
 1. **Identify** — an LLM maps the free-text name to lookup identifiers (NVD CPE, endoflife.date slug,
    GitHub repo, package name). These are *guesses* that are then verified against each source.
 2. **Latest version** — first successful source wins, in this order:
-   endoflife.date → official GitHub releases → PyPI / npm → Homebrew cask.
+   endoflife.date → official GitHub releases → PyPI / npm → Chocolatey (Windows apps) / Homebrew (macOS apps).
+   Chocolatey and Homebrew track each vendor's own download, so they cover standard closed-source apps
+   (Adobe Reader, Chrome, Zoom…). If no AI identifier works, Homebrew is searched by product name.
 3. **Vulnerabilities** — NIST NVD CVE API (matched by CPE and version),
    CISA Known Exploited Vulnerabilities catalog, and OSV.dev for PyPI/npm packages.
 4. **Risk level** — fixed, explainable rules (not the LLM):
    - 🔴 **High**: any CISA KEV hit, any CVSS ≥ 9.0, or the release cycle is end-of-life
    - 🟠 **Medium**: CVSS 7.0–8.9, OSV advisories, or an outdated version
-   - ⚪ **Unverified**: the product or latest version could not be confirmed
+   - ⚪ **Unverified**: the product, its version or its latest release could not be confirmed.
+     If no version is known, CVEs across all historical versions are shown as context only.
    - 🟢 **Low**: none of the above
 5. **AI summary** — the LLM summarises only the fetched data.
 

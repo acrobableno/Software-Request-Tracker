@@ -25,17 +25,18 @@ status_filter = st.multiselect("Status", db.STATUSES, default=db.STATUSES)
 view = df[df["status"].isin(status_filter)]
 cols = ["id", "created_at", "requester_name", "department", "software_name", "requested_version",
         "latest_version", "risk_level", "status"]
-st.dataframe(view[cols], hide_index=True, use_container_width=True)
-st.download_button("Download CSV", view.drop(columns=["check_json"]).to_csv(index=False),
+view = view[cols].reset_index(drop=True)
+st.caption("Click a row to open the request.")
+table = st.dataframe(view, hide_index=True, use_container_width=True,
+                     on_select="rerun", selection_mode="single-row", key="requests_table")
+st.download_button("Download CSV", df[df["status"].isin(status_filter)].drop(columns=["check_json"]).to_csv(index=False),
                    file_name="software_requests.csv", mime="text/csv")
 
-st.divider()
-request_id = st.selectbox(
-    "Open request", view["id"].tolist(),
-    format_func=lambda i: f"#{i} — {df.loc[df.id == i, 'software_name'].iloc[0]} "
-                          f"({df.loc[df.id == i, 'requester_name'].iloc[0]})")
-if request_id is None:
+if view.empty:
     st.stop()
+selected_rows = table.selection.rows
+request_id = int(view.loc[selected_rows[0] if selected_rows else 0, "id"])  # default: newest request
+st.divider()
 
 req = db.get_request(int(request_id))
 left, right = st.columns([2, 1])
@@ -64,7 +65,8 @@ with right:
             "github_repo": st.text_input("GitHub repo (owner/repo)"),
             "package_ecosystem": st.selectbox("Package ecosystem", ["", "PyPI", "npm"]),
             "package_name": st.text_input("Package name"),
-            "homebrew_cask": st.text_input("Homebrew cask"),
+            "chocolatey_id": st.text_input("Chocolatey package id", placeholder="e.g. adobereader"),
+            "homebrew_cask": st.text_input("Homebrew cask", placeholder="e.g. adobe-acrobat-reader"),
         }
         if st.button("Re-run check"):
             with st.status("Checking official sources…", expanded=True) as s:

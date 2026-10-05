@@ -56,13 +56,14 @@ Return a JSON object with exactly these keys:
 - "github_repo": "owner/repo" of the OFFICIAL source repository, or null if closed source
 - "package_ecosystem": "PyPI", "npm" or null (only if it is a library/package)
 - "package_name": package name in that ecosystem, or null
-- "homebrew_cask": Homebrew cask token for the macOS app, or null
+- "chocolatey_id": Chocolatey package id for the Windows app, e.g. "adobereader", "googlechrome", or null
+- "homebrew_cask": Homebrew cask token for the macOS app, e.g. "adobe-acrobat-reader", or null
 - "official_website": vendor's official download or release-notes URL, or null
 - "category": short category, e.g. "Text editor"
 """
 
 IDENTITY_KEYS = ["display_name", "vendor", "cpe_vendor", "cpe_product", "endoflife_slug",
-                 "github_repo", "package_ecosystem", "package_name", "homebrew_cask",
+                 "github_repo", "package_ecosystem", "package_name", "chocolatey_id", "homebrew_cask",
                  "official_website", "category"]
 
 
@@ -70,7 +71,7 @@ def fallback_identity(name):
     """Used when no OpenAI key is configured: rely on NVD keyword search instead."""
     slug = name.strip().lower().replace(" ", "-")
     identity = dict.fromkeys(IDENTITY_KEYS)
-    identity.update(display_name=name.strip(), endoflife_slug=slug, homebrew_cask=slug)
+    identity.update(display_name=name.strip(), endoflife_slug=slug, chocolatey_id=slug.replace("-", ""))
     return identity
 
 

@@ -13,7 +13,10 @@ Sources:
   - CISA Known Exploited Vulnerabilities (KEV) catalog
   - OSV.dev                   vulnerabilities for PyPI / npm packages
 """
+import re
 import time
+import xml.etree.ElementTree as ET
+from urllib.parse import quote
 
 import requests
 import streamlit as st
@@ -129,18 +132,81 @@ def fetch_npm(package):
     }
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_homebrew_cask(token):
-    if not token:
-        return None
-    data, err = _get(f"https://formulae.brew.sh/api/cask/{token}.json")
+def norm(text):
+    """'Notepad++' -> 'notepad', 'Adobe Acrobat Reader' -> 'adobeacrobatreader'."""
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def _words(text):
+    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_homebrew_index():
+    """All Homebrew casks (~7k desktop apps) as {token: {names, version, homepage}}."""
+    data, err = _get("https://formulae.brew.sh/api/cask.json")
     if err:
         return {"error": err}
+    return {c["token"]: {"names": c.get("name") or [], "version": c.get("version"),
+                         "homepage": c.get("homepage")} for c in data if c.get("token")}
+
+
+def find_homebrew_cask(token, name):
+    """Look up a cask by token, else by product name. Returns (token, entry, method) or None."""
+    index = load_homebrew_index()
+    if index.get("error"):
+        return {"error": index["error"]}
+    if token and token in index:
+        return token, index[token], "token"
+    wanted, wanted_words = norm(name), _words(name)
+    if not wanted:
+        return None
+    exact = [t for t, c in index.items() if wanted in {norm(t), *map(norm, c["names"])}]
+    if exact:
+        return exact[0], index[exact[0]], "name"
+    # every word typed appears in the cask name, e.g. "adobe reader" -> "Adobe Acrobat Reader"
+    subset = [(len(n), t) for t, c in index.items() for n in c["names"] if wanted_words <= _words(n)]
+    if subset:
+        t = min(subset)[1]
+        return t, index[t], "partial name"
+    return None
+
+
+def fetch_homebrew_cask(token, name=None):
+    found = find_homebrew_cask(token, name)
+    if not found or isinstance(found, dict):
+        return found
+    token, cask, method = found
     return {
-        "source": "Homebrew cask (vendor download)",
-        "url": data.get("homepage") or f"https://formulae.brew.sh/cask/{token}",
-        "version": (data.get("version") or "").split(",")[0],
+        "source": f"Homebrew cask '{token}' (macOS vendor download, matched by {method})",
+        "url": cask.get("homepage") or f"https://formulae.brew.sh/cask/{token}",
+        "version": (cask.get("version") or "").split(",")[0],
         "release_date": None,
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_chocolatey(package_id):
+    """Latest approved version of a Windows package on the Chocolatey community repository."""
+    if not package_id:
+        return None
+    # OData query built by hand so spaces become %20 (not '+')
+    odata_filter = quote(f"Id eq '{package_id}' and IsLatestVersion", safe="'")
+    url = f"https://community.chocolatey.org/api/v2/Packages()?$filter={odata_filter}"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+    except (requests.RequestException, ET.ParseError) as e:
+        return {"error": str(e)}
+    props = {el.tag.split("}")[-1]: el.text for el in root.iter() if el.tag.endswith(("}Version", "}Published"))}
+    if not props.get("Version"):
+        return {"error": "not found"}
+    return {
+        "source": "Chocolatey (Windows package)",
+        "url": f"https://community.chocolatey.org/packages/{package_id}",
+        "version": props["Version"],
+        "release_date": (props.get("Published") or "")[:10] or None,
     }
 
 
@@ -165,38 +231,57 @@ def _nvd_get(url, params):
     return data, err
 
 
+def cpe_escape(value):
+    """CPE 2.3 formatted strings escape everything except letters, digits, '_', '-' and '.'."""
+    return re.sub(r"([^A-Za-z0-9_.\-])", r"\\\1", value)
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def resolve_cpe(vendor, product, keyword):
     """Confirm the NVD CPE vendor:product for the software.
 
-    Tries the exact vendor:product first (as suggested by the LLM), then falls
-    back to a keyword search of the official CPE dictionary.
+    1. exact vendor:product (as suggested by the LLM)
+    2. keyword search of the official CPE dictionary, choosing the product whose
+       name matches what was asked for ("keyword-confirmed"), else the best partial match.
     Returns {"vendor", "product", "title", "method"} or {"error"}.
     """
-    attempts = []
-    if vendor and product:
-        attempts.append(("exact", {"cpeMatchString": f"cpe:2.3:a:{vendor}:{product}", "resultsPerPage": 5}))
-    if keyword:
-        attempts.append(("keyword", {"keywordSearch": keyword, "resultsPerPage": 20}))
-
     last_err = "no identifiers to search"
-    for method, params in attempts:
-        data, err = _nvd_get(NVD_CPE_URL, params)
-        if err:
-            last_err = err
-            continue
-        for p in data.get("products", []):
-            cpe = p.get("cpe", {})
-            if cpe.get("deprecated"):
-                continue
-            parts = cpe.get("cpeName", "").split(":")
-            if len(parts) < 6 or parts[2] != "a":  # applications only
-                continue
-            titles = cpe.get("titles") or [{}]
-            title = next((t["title"] for t in titles if t.get("lang") == "en"), titles[0].get("title"))
-            return {"vendor": parts[3], "product": parts[4], "title": title, "method": method}
-        last_err = "no matching CPE in the NVD dictionary"
+    if vendor and product:
+        v, p = cpe_escape(vendor.replace("\\", "")), cpe_escape(product.replace("\\", ""))
+        data, err = _nvd_get(NVD_CPE_URL, {"cpeMatchString": f"cpe:2.3:a:{v}:{p}", "resultsPerPage": 5})
+        last_err = err or last_err
+        for c in _cpe_candidates(data):
+            return {**c, "method": "exact"}
+    if keyword:
+        data, err = _nvd_get(NVD_CPE_URL, {"keywordSearch": keyword, "resultsPerPage": 200})
+        last_err = err or "no matching CPE in the NVD dictionary"
+        targets = {norm(keyword), norm(product)} - {""}
+        words = _words(keyword)
+        best, best_score = None, 0
+        for c in _cpe_candidates(data):
+            name = c["product"].replace("\\", "")
+            score = 3 if norm(name) in targets else 1 if words <= _words(name.replace("_", " ") + " " + c["vendor"]) else 0
+            if score > best_score:
+                best, best_score = c, score
+        if best:
+            return {**best, "method": "keyword-confirmed" if best_score == 3 else "keyword"}
     return {"error": last_err}
+
+
+def _cpe_candidates(data):
+    """Distinct non-deprecated application vendor:product pairs from a CPE API response."""
+    seen = set()
+    for p in (data or {}).get("products", []):
+        cpe = p.get("cpe", {})
+        if cpe.get("deprecated"):
+            continue
+        parts = re.split(r"(?<!\\):", cpe.get("cpeName", ""))  # ':' not preceded by '\'
+        if len(parts) < 6 or parts[2] != "a" or (parts[3], parts[4]) in seen:
+            continue
+        seen.add((parts[3], parts[4]))
+        titles = cpe.get("titles") or [{}]
+        title = next((t["title"] for t in titles if t.get("lang") == "en"), titles[0].get("title"))
+        yield {"vendor": parts[3], "product": parts[4], "title": title}
 
 
 def _parse_cve(item):

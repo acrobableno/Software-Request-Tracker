@@ -34,8 +34,11 @@ def mock(monkeypatch):
     calls.clear()
     monkeypatch.setattr(sources, "_get", fake_get)
     monkeypatch.setattr(sources.time, "sleep", lambda s: None)
-    for f in ("fetch_endoflife","fetch_github_latest","fetch_pypi","fetch_npm","fetch_homebrew_cask",
-              "resolve_cpe","fetch_nvd_cves","load_kev","fetch_osv"):
+    def no_network(*a, **k): raise sources.requests.ConnectionError("offline test")
+    monkeypatch.setattr(sources.requests, "get", no_network)   # chocolatey
+    monkeypatch.setattr(sources.requests, "post", no_network)  # osv
+    for f in ("fetch_endoflife","fetch_github_latest","fetch_pypi","fetch_npm",
+              "resolve_cpe","fetch_nvd_cves","load_kev","fetch_osv","load_homebrew_index","fetch_chocolatey"):
         getattr(sources, f).clear()
 
 REQ = {"software_name": "Python", "requested_version": "3.8.10", "platform": "Windows", "purpose": "scripts"}
@@ -86,3 +89,67 @@ def test_llm_path(monkeypatch):
     assert f["identity"]["cpe_vendor"] == "python" and "extra" not in f["identity"]
     assert f["summary"].startswith("**Recommendation")
     assert "CVE-2023-0001" in prompts[1] and "<findings>" in prompts[1]
+
+
+# ---- standard closed-source apps (Adobe Reader style) -------------------------------
+BREW = [{"token": "adobe-acrobat-reader", "name": ["Adobe Acrobat Reader"], "version": "25.001.20756",
+         "homepage": "https://www.adobe.com/acrobat/pdf-reader.html"},
+        {"token": "adobe-acrobat-pro", "name": ["Adobe Acrobat Pro DC"], "version": "25.001.20756", "homepage": None},
+        {"token": "notepadnext", "name": ["NotepadNext"], "version": "0.8", "homepage": None}]
+CPE_KW = {"products": [
+    {"cpe": {"cpeName": "cpe:2.3:a:adobe:acrobat_reader_dc:15.006.30033:*:*:*:classic:*:*:*", "deprecated": False,
+             "titles": [{"title": "Adobe Acrobat Reader DC 15.006.30033", "lang": "en"}]}},
+    {"cpe": {"cpeName": "cpe:2.3:a:notepad-plus-plus:notepad\\+\\+:8.6:*:*:*:*:*:*:*", "deprecated": False,
+             "titles": [{"title": "Notepad++ 8.6", "lang": "en"}]}}]}
+
+def fake_get2(url, params=None, headers=None):
+    calls.append((url, params))
+    if url.endswith("cask.json"): return BREW, None
+    if "cpes/2.0" in url:
+        return (CPE_KW, None) if "keywordSearch" in params else ({"products": []}, None)
+    if "cves/2.0" in url:
+        if params["virtualMatchString"].endswith(":25.001.20756"):
+            return {"totalResults": 1, "vulnerabilities": [cve("CVE-2025-1111", 7.8)]}, None
+        return CVES_OLD, None  # product-wide history
+    if "known_exploited" in url: return KEV, None
+    return None, "not found"
+
+def test_closed_source_app_found_via_homebrew_name(monkeypatch):
+    monkeypatch.setattr(sources, "_get", fake_get2)
+    monkeypatch.setattr(sources, "fetch_chocolatey", lambda i: {"error": "not found"})
+    f = assess.run_check({"software_name": "Adobe Reader", "requested_version": "", "platform": "Windows",
+                          "purpose": "pdf"}, progress=lambda m: None)
+    assert f["latest"]["version"] == "25.001.20756" and "adobe-acrobat-reader" in f["latest"]["source"]
+    assert f["cpe"]["product"] == "acrobat_reader_dc" and f["cpe"]["method"] == "keyword"
+    assert f["target_version"] == "25.001.20756"
+    assert f["risk"]["level"] == "Medium"            # one high CVE on the latest build
+    assert any("macOS build" in c for c in f["risk"]["caveats"])
+
+def test_no_version_known_is_not_high(monkeypatch):
+    monkeypatch.setattr(sources, "_get", lambda u, params=None, headers=None:
+                        fake_get2(u, params) if "nist" in u or "known_exploited" in u else (None, "not found"))
+    monkeypatch.setattr(sources, "fetch_chocolatey", lambda i: None)
+    f = assess.run_check({"software_name": "Adobe Reader", "requested_version": "", "platform": "Windows",
+                          "purpose": "pdf"}, progress=lambda m: None)
+    assert f["target_version"] is None
+    assert f["risk"]["level"] == "Unverified" and not f["risk"]["reasons"]
+    assert any("ALL historical versions" in c for c in f["risk"]["caveats"])
+
+def test_cpe_special_chars(monkeypatch):
+    monkeypatch.setattr(sources, "_get", fake_get2)
+    r = sources.resolve_cpe("notepad-plus-plus", "notepad++", "Notepad++")
+    assert r == {"vendor": "notepad-plus-plus", "product": "notepad\\+\\+", "title": "Notepad++ 8.6",
+                 "method": "keyword-confirmed"}
+    exact_query = [p for u, p in calls if p and "cpeMatchString" in p][0]["cpeMatchString"]
+    assert exact_query == "cpe:2.3:a:notepad-plus-plus:notepad\\+\\+"
+
+def test_chocolatey_xml(monkeypatch):
+    xml = b'''<feed xmlns="http://www.w3.org/2005/Atom" xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices"
+      xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"><entry><m:properties>
+      <d:Version>2025.001.20756</d:Version><d:Published>2025-09-10T12:00:00</d:Published></m:properties></entry></feed>'''
+    class R:
+        content = xml
+        def raise_for_status(self): pass
+    monkeypatch.setattr(sources.requests, "get", lambda *a, **k: R())
+    r = sources.fetch_chocolatey("adobereader")
+    assert r["version"] == "2025.001.20756" and r["release_date"] == "2025-09-10"

@@ -27,7 +27,7 @@ def test_submit_and_review(tmp_path, monkeypatch):
     rv.secrets["APP_PASSWORD"] = "pw"; rv.session_state["password_correct"] = True
     rv.run()
     assert not rv.exception, rv.exception
-    rv.selectbox[1].select("Approved with Conditions"); rv.text_area[0].input("upgrade to 3.13")
+    rv.selectbox[0].select("Approved with Conditions"); rv.text_area[0].input("upgrade to 3.13")
     rv.button[0].click().run()   # "Save decision"
     assert db.get_request(1)["status"] == "Approved with Conditions"
 
